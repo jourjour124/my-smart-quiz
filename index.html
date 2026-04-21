@@ -22,6 +22,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;b
 .btn:disabled{opacity:0.5;cursor:not-allowed;transform:none;box-shadow:none}
 .btn2{background:#6c757d}
 .btn2:hover{box-shadow:0 4px 12px rgba(108,117,125,0.4)}
+.btn-sync{background:#27ae60}
+.btn-sync:hover{box-shadow:0 4px 12px rgba(39,174,96,0.4)}
 input,textarea,select{width:100%;padding:12px;border:2px solid #e9ecef;border-radius:8px;font-size:14px;transition:border-color 0.2s}
 input:focus,textarea:focus,select:focus{outline:none;border-color:#667eea}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}
@@ -42,6 +44,9 @@ input:focus,textarea:focus,select:focus{outline:none;border-color:#667eea}
 .err{background:#fff5f5;border:2px solid #fc8181;border-radius:8px;padding:12px;color:#c53030;margin:10px 0}
 .suc{background:#f0fff4;border:2px solid #68d391;border-radius:8px;padding:12px;color:#276749;margin:10px 0}
 .badge{display:inline-block;padding:6px 14px;background:rgba(255,255,255,0.2);border-radius:20px;font-weight:600}
+.sync-badge{display:inline-block;padding:4px 10px;background:rgba(39,174,96,0.1);color:#27ae60;border-radius:12px;font-size:11px;margin-left:10px}
+.sync-badge.loading{background:rgba(102,126,234,0.1);color:#667eea}
+.sync-badge.error{background:rgba(231,76,60,0.1);color:#e74c3c}
 @keyframes spin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
 .spin{animation:spin 1.5s linear infinite;display:inline-block}
 </style>
@@ -49,563 +54,870 @@ input:focus,textarea:focus,select:focus{outline:none;border-color:#667eea}
 <body>
 <div id="root"></div>
 <script>
+// ============ GitHub 配置 ============
+// 请在这里填入你的 GitHub 配置
+const GITHUB_CONFIG = {
+owner: 'jourjour124', // 改成你的 GitHub 用户名
+repo: 'my-smart-quiz', // 改成你的仓库名
+path: 'data/questions.json', // 题库文件路径
+branch: 'main',
+token: '' // 可选：如果留空则只读模式
+};
+// ====================================
+
 // 工具函数
 const $ = (id) => document.getElementById(id);
 const store = {
-  get: (k, d) => { try { return JSON.parse(localStorage.getItem('zx_' + k)) || d; } catch (e) { return d; } },
-  set: (k, v) => localStorage.setItem('zx_' + k, JSON.stringify(v))
+get: (k, d) => { try { return JSON.parse(localStorage.getItem('zx_' + k)) || d; } catch (e) { return d; } },
+set: (k, v) => localStorage.setItem('zx_' + k, JSON.stringify(v))
 };
 
 // 初始数据
 const INIT_SUBJECTS = {
-  '语文': { icon: '📚', questions: [], files: [] },
-  '英语': { icon: '🌍', questions: [], files: [] },
-  '历史': { icon: '🏛️', questions: [], files: [] },
-  '生物': { icon: '🧬', questions: [], files: [] },
-  '地理': { icon: '🗺️', questions: [], files: [] },
-  '道法': { icon: '⚖️', questions: [], files: [] }
+'语文': { icon: '📚', questions: [], files: [] },
+'英语': { icon: '🌍', questions: [], files: [] },
+'历史': { icon: '🏛️', questions: [], files: [] },
+'生物': { icon: '🧬', questions: [], files: [] },
+'地理': { icon: '🗺️', questions: [], files: [] },
+'道法': { icon: '⚖️', questions: [], files: [] }
 };
 
 // 状态管理
 let state = {
-  tab: 'ai',
-  score: store.get('score', 0),
-  subjects: store.get('subjects', INIT_SUBJECTS),
-  history: store.get('history', []),
-  wrong: store.get('wrong', []),
-  api: store.get('api', { key: '', url: 'https://open.bigmodel.cn/api/paas/v4/chat/completions' }),
-  // AI页面状态
-  aiStep: 'input',
-  aiSubj: '语文',
-  aiCount: 10,
-  aiRatio: 0.7,
-  aiFile: null,
-  aiContent: '',
-  aiProgress: 0,
-  aiText: '',
-  aiQuestions: null,
-  aiMsg: null,
-  // 测试状态
-  testData: null,
-  testIndex: 0,
-  testAnswers: [],
-  testDone: false,
-  testScore: 0,
-  // 混合测试
-  mixSelected: [],
-  mixData: null,
-  // 设置状态
-  setKey: '',
-  setUrl: '',
-  setMsg: null
+tab: 'ai',
+score: store.get('score', 0),
+subjects: store.get('subjects', JSON.parse(JSON.stringify(INIT_SUBJECTS))),
+history: store.get('history', []),
+wrong: store.get('wrong', []),
+api: store.get('api', { key: '', url: 'https://open.bigmodel.cn/api/paas/v4/chat/completions' }),
+// 云端同步状态
+cloudStatus: 'loading', // loading | synced | unsynced | error
+cloudVersion: store.get('cloudVersion', null),
+localVersion: null,
+// AI页面状态
+aiStep: 'input',
+aiSubj: '语文',
+aiCount: 10,
+aiRatio: 0.7,
+aiFile: null,
+aiContent: '',
+aiProgress: 0,
+aiText: '',
+aiQuestions: null,
+aiMsg: null,
+// 测试状态
+testData: null,
+testIndex: 0,
+testAnswers: [],
+testDone: false,
+testScore: 0,
+// 混合测试
+mixSelected: [],
+mixData: null,
+// 设置状态
+setKey: '',
+setUrl: '',
+setMsg: null,
+setGitToken: '',
+setGitOwner: '',
+setGitRepo: ''
 };
+
+// 生成版本号
+function genVersion() {
+return Date.now().toString(36) + '-' + Math.random().toString(36).substr(2, 5);
+}
 
 // 保存状态
 function saveState() {
-  store.set('score', state.score);
-  store.set('subjects', state.subjects);
-  store.set('history', state.history);
-  store.set('wrong', state.wrong);
-  store.set('api', state.api);
+store.set('score', state.score);
+store.set('subjects', state.subjects);
+store.set('history', state.history);
+store.set('wrong', state.wrong);
+store.set('api', state.api);
+store.set('cloudVersion', state.cloudVersion);
+state.localVersion = genVersion();
+}
+
+// 从 GitHub 加载题库
+async function loadFromCloud() {
+state.cloudStatus = 'loading';
+render();
+
+try {
+const config = {
+owner: state.setGitOwner || GITHUB_CONFIG.owner,
+repo: state.setGitRepo || GITHUB_CONFIG.repo,
+path: GITHUB_CONFIG.path,
+branch: GITHUB_CONFIG.branch
+};
+
+const url = `https://api.github.com/repos/${config.owner}/${config.repo}/contents/${config.path}?ref=${config.branch}`;
+
+const res = await fetch(url);
+if (!res.ok) {
+if (res.status === 404) {
+// 文件不存在，先保存一份上去
+state.cloudStatus = 'unsynced';
+render();
+await saveToCloud();
+return;
+}
+throw new Error('加载失败: ' + res.status);
+}
+
+const data = await res.json();
+const content = JSON.parse(atob(data.content));
+
+// 合并数据（云端有数据则用云端，覆盖本地）
+if (content.subjects) {
+state.subjects = { ...INIT_SUBJECTS, ...content.subjects };
+}
+if (content.score !== undefined) {
+state.score = content.score;
+}
+if (content.history) {
+state.history = content.history;
+}
+if (content.wrong) {
+state.wrong = content.wrong;
+}
+
+state.cloudVersion = content.version || data.sha;
+state.localVersion = genVersion();
+state.cloudStatus = 'synced';
+store.set('subjects', state.subjects);
+store.set('score', state.score);
+store.set('history', state.history);
+store.set('wrong', state.wrong);
+
+} catch (e) {
+console.error('加载云端数据失败:', e);
+state.cloudStatus = 'error';
+}
+
+render();
+}
+
+// 保存到 GitHub
+async function saveToCloud(silent = false) {
+const token = state.setGitToken || GITHUB_CONFIG.token;
+if (!token) {
+if (!silent) {
+alert('请先在「设置」页面配置 GitHub Token 来启用同步功能');
+}
+return false;
+}
+
+try {
+const config = {
+owner: state.setGitOwner || GITHUB_CONFIG.owner,
+repo: state.setGitRepo || GITHUB_CONFIG.repo,
+path: GITHUB_CONFIG.path,
+branch: GITHUB_CONFIG.branch
+};
+
+const url = `https://api.github.com/repos/${config.owner}/${config.repo}/contents/${config.path}`;
+
+// 先获取当前 SHA
+let sha = null;
+const getRes = await fetch(`${url}?ref=${config.branch}`, {
+headers: { 'Authorization': `token ${token}` }
+});
+if (getRes.ok) {
+const data = await getRes.json();
+sha = data.sha;
+}
+
+const content = {
+version: state.localVersion || genVersion(),
+updated: new Date().toISOString().split('T')[0],
+score: state.score,
+subjects: state.subjects,
+history: state.history,
+wrong: state.wrong
+};
+
+const body = {
+message: `更新题库 ${new Date().toLocaleString('zh-CN')}`,
+content: btoa(unescape(encodeURIComponent(JSON.stringify(content, null, 2)))),
+branch: config.branch
+};
+if (sha) body.sha = sha;
+
+const res = await fetch(url, {
+method: 'PUT',
+headers: {
+'Authorization': `token ${token}`,
+'Content-Type': 'application/json'
+},
+body: JSON.stringify(body)
+});
+
+if (!res.ok) {
+throw new Error('保存失败: ' + res.status);
+}
+
+const data = await res.json();
+state.cloudVersion = data.content.sha;
+state.cloudStatus = 'synced';
+
+if (!silent) {
+state.setMsg = { type: 'suc', text: '✅ 已同步到 GitHub！' };
+render();
+}
+return true;
+
+} catch (e) {
+console.error('保存失败:', e);
+if (!silent) {
+state.setMsg = { type: 'err', text: '同步失败: ' + e.message };
+render();
+}
+return false;
+}
+}
+
+// 自动保存（数据变化时）
+let saveTimer = null;
+function autoSave() {
+if (saveTimer) clearTimeout(saveTimer);
+saveTimer = setTimeout(() => {
+saveState();
+saveToCloud(true); // 后台静默同步
+}, 2000);
+}
+
+// 导出题库
+function exportData() {
+const data = {
+version: '1.0',
+exported: new Date().toLocaleString('zh-CN'),
+score: state.score,
+subjects: state.subjects,
+history: state.history,
+wrong: state.wrong
+};
+const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+const url = URL.createObjectURL(blob);
+const a = document.createElement('a');
+a.href = url;
+a.download = `智学练题库_${new Date().toISOString().split('T')[0]}.json`;
+document.body.appendChild(a);
+a.click();
+document.body.removeChild(a);
+URL.revokeObjectURL(url);
+state.setMsg = { type: 'suc', text: '✅ 题库已导出！' };
+render();
+}
+
+// 导入题库
+async function importData(file) {
+if (!file) return;
+try {
+const text = await file.text();
+const data = JSON.parse(text);
+
+if (!data.subjects) {
+throw new Error('文件格式错误');
+}
+
+if (confirm(`导入将覆盖当前题库\n\n当前: ${Object.values(state.subjects).reduce((a, s) => a + s.questions.length, 0)}题\n文件: ${Object.values(data.subjects).reduce((a, s) => a + s.questions.length, 0)}题\n\n确定导入？`)) {
+state.score = data.score || 0;
+state.subjects = data.subjects;
+state.history = data.history || [];
+state.wrong = data.wrong || [];
+saveState();
+state.setMsg = { type: 'suc', text: '✅ 题库导入成功！' };
+render();
+}
+} catch (e) {
+alert('导入失败: ' + e.message);
+}
 }
 
 // 渲染函数
 function render() {
-  const hasKey = state.api.key && state.api.key.trim().length > 0;
-  const subjectNames = ['语文', '英语', '历史', '生物', '地理', '道法'];
-  const subjectIcons = ['📚', '🌍', '🏛️', '🧬', '🗺️', '⚖️'];
+const hasKey = state.api.key && state.api.key.trim().length > 0;
+const subjectNames = ['语文', '英语', '历史', '生物', '地理', '道法'];
+const subjectIcons = ['📚', '🌍', '🏛️', '🧬', '🗺️', '⚖️'];
 
-  let html = `
-    <div class="app">
-      <div class="hd">
-        <h1>📖 智学练</h1>
-        <span class="badge">⭐ ${state.score} 分</span>
-      </div>
-      <div class="bd">
-        <div class="tabs">
-          <button class="tab${state.tab === 'ai' ? ' on' : ''}" onclick="setTab('ai')">🤖 AI出题</button>
-          <button class="tab${state.tab === 'lib' ? ' on' : ''}" onclick="setTab('lib')">📁 题库</button>
-          <button class="tab${state.tab === 'test' ? ' on' : ''}" onclick="setTab('test')">📝 测试</button>
-          <button class="tab${state.tab === 'mix' ? ' on' : ''}" onclick="setTab('mix')">🔀 混合</button>
-          <button class="tab${state.tab === 'scr' ? ' on' : ''}" onclick="setTab('scr')">🏆 积分</button>
-          <button class="tab${state.tab === 'wr' ? ' on' : ''}" onclick="setTab('wr')">📕 错题</button>
-          <button class="tab${state.tab === 'set' ? ' on' : ''}" onclick="setTab('set')">⚙️ 设置</button>
-        </div>
-  `;
+// 同步状态徽章
+const syncBadge = {
+'loading': '<span class="sync-badge loading">⏳ 同步中...</span>',
+'synced': '<span class="sync-badge">☁️ 已同步</span>',
+'unsynced': '<span class="sync-badge error">⚠️ 未同步</span>',
+'error': '<span class="sync-badge error">❌ 同步失败</span>'
+};
 
-  if (state.tab === 'ai') {
-    html += renderAI(hasKey, subjectNames, subjectIcons);
-  } else if (state.tab === 'lib') {
-    html += renderLib();
-  } else if (state.tab === 'set') {
-    html += renderSet();
-  } else if (state.tab === 'test') {
-    html += renderTest(subjectNames, subjectIcons);
-  } else if (state.tab === 'mix') {
-    html += renderMix(subjectNames, subjectIcons);
-  } else if (state.tab === 'scr') {
-    html += renderScr();
-  } else if (state.tab === 'wr') {
-    html += renderWr();
-  }
+let html = `
+<div class="app">
+<div class="hd">
+<h1>📖 智学练</h1>
+<div>
+<span class="badge">⭐ ${state.score} 分</span>
+${syncBadge[state.cloudStatus] || ''}
+</div>
+</div>
+<div class="bd">
+<div class="tabs">
+<button class="tab${state.tab === 'ai' ? ' on' : ''}" onclick="setTab('ai')">🤖 AI出题</button>
+<button class="tab${state.tab === 'lib' ? ' on' : ''}" onclick="setTab('lib')">📁 题库</button>
+<button class="tab${state.tab === 'test' ? ' on' : ''}" onclick="setTab('test')">📝 测试</button>
+<button class="tab${state.tab === 'mix' ? ' on' : ''}" onclick="setTab('mix')">🔀 混合</button>
+<button class="tab${state.tab === 'scr' ? ' on' : ''}" onclick="setTab('scr')">🏆 积分</button>
+<button class="tab${state.tab === 'wr' ? ' on' : ''}" onclick="setTab('wr')">📕 错题</button>
+<button class="tab${state.tab === 'set' ? ' on' : ''}" onclick="setTab('set')">⚙️ 设置</button>
+</div>
+`;
 
-  html += `</div></div>`;
-  $('root').innerHTML = html;
+if (state.tab === 'ai') {
+html += renderAI(hasKey, subjectNames, subjectIcons);
+} else if (state.tab === 'lib') {
+html += renderLib();
+} else if (state.tab === 'set') {
+html += renderSet();
+} else if (state.tab === 'test') {
+html += renderTest(subjectNames, subjectIcons);
+} else if (state.tab === 'mix') {
+html += renderMix(subjectNames, subjectIcons);
+} else if (state.tab === 'scr') {
+html += renderScr();
+} else if (state.tab === 'wr') {
+html += renderWr();
+}
+
+html += `</div></div>`;
+$('root').innerHTML = html;
 }
 
 function renderAI(hasKey, names, icons) {
-  if (state.aiStep === 'loading') {
-    const elapsed = state.aiStartTime ? Math.floor((Date.now() - state.aiStartTime) / 1000) : 0;
-    return `
-      <div class="pg">
-        <div style="font-size:60px;margin-bottom:16px" class="spin">🤖</div>
-        <div style="font-size:20px;font-weight:600">${state.aiSubj} · ${state.aiCount}道题</div>
-        <div style="opacity:0.8;margin:8px 0;font-size:14px">${state.aiText || '正在处理...'}</div>
-        <div style="opacity:0.6;font-size:12px;margin-bottom:8px">已等待 ${elapsed} 秒（智谱API通常30-60秒响应）</div>
-        <div class="bar"><div class="fil" style="width:${state.aiProgress}%"></div></div>
-        <div style="margin-top:16px;font-size:12px;opacity:0.7">💡 如果超过90秒无响应，可刷新页面重试</div>
-      </div>
-    `;
-  }
+if (state.aiStep === 'loading') {
+const elapsed = state.aiStartTime ? Math.floor((Date.now() - state.aiStartTime) / 1000) : 0;
+return `
+<div class="pg">
+<div style="font-size:60px;margin-bottom:16px" class="spin">🤖</div>
+<div style="font-size:20px;font-weight:600">${state.aiSubj} · ${state.aiCount}道题</div>
+<div style="opacity:0.8;margin:8px 0;font-size:14px">${state.aiText || '正在处理...'}</div>
+<div style="opacity:0.6;font-size:12px;margin-bottom:8px">已等待 ${elapsed} 秒（智谱API通常30-60秒响应）</div>
+<div class="bar"><div class="fil" style="width:${state.aiProgress}%"></div></div>
+<div style="margin-top:16px;font-size:12px;opacity:0.7">💡 如果超过90秒无响应，可刷新页面重试</div>
+</div>
+`;
+}
 
-  if (state.aiStep === 'preview' && state.aiQuestions) {
-    return `
-      <div class="rs">
-        <div style="font-size:60px;margin-bottom:10px">✅</div>
-        <div style="font-size:22px;font-weight:600">出题完成！</div>
-        <div style="margin-top:8px">共生成 ${state.aiQuestions.length} 道题目</div>
-      </div>
-      <div class="card">
-        <h2>题目预览</h2>
-        <div style="max-height:280px;overflow:auto">
-          ${state.aiQuestions.map((q, i) => `
-            <div style="padding:10px;background:#f8f9fa;border-radius:6px;margin:6px 0">
-              <span style="background:${q.type === 'choice' ? '#e3f2fd' : '#fff3e0'};padding:2px 8px;border-radius:4px;font-size:11px">${q.type === 'choice' ? '选择题' : '填空题'}</span>
-              <div style="margin-top:6px">${q.question}</div>
-              ${q.type === 'choice' && q.options ? `<div style="font-size:12px;color:#666;margin-top:4px">A.${q.options[0]} B.${q.options[1]} C.${q.options[2]} D.${q.options[3]}</div>` : ''}
-              <div style="font-size:12px;color:#276749;margin-top:4px">✅ 答案：${q.answer}</div>
-            </div>
-          `).join('')}
-        </div>
-      </div>
-      <div style="display:flex;gap:10px">
-        <button class="btn btn2" onclick="aiReset()">重新出题</button>
-        <button class="btn" style="flex:1" onclick="aiSave()">💾 保存到【${state.aiSubj}】题库</button>
-      </div>
-    `;
-  }
+if (state.aiStep === 'preview' && state.aiQuestions) {
+return `
+<div class="rs">
+<div style="font-size:60px;margin-bottom:10px">✅</div>
+<div style="font-size:22px;font-weight:600">出题完成！</div>
+<div style="margin-top:8px">共生成 ${state.aiQuestions.length} 道题目</div>
+</div>
+<div class="card">
+<h2>题目预览</h2>
+<div style="max-height:280px;overflow:auto">
+${state.aiQuestions.map((q, i) => `
+<div style="padding:10px;background:#f8f9fa;border-radius:6px;margin:6px 0">
+<span style="background:${q.type === 'choice' ? '#e3f2fd' : '#fff3e0'};padding:2px 8px;border-radius:4px;font-size:11px">${q.type === 'choice' ? '选择题' : '填空题'}</span>
+<div style="margin-top:6px">${q.question}</div>
+${q.type === 'choice' && q.options ? `<div style="font-size:12px;color:#666;margin-top:4px">A.${q.options[0]} B.${q.options[1]} C.${q.options[2]} D.${q.options[3]}</div>` : ''}
+<div style="font-size:12px;color:#276749;margin-top:4px">✅ 答案：${q.answer}</div>
+</div>
+`).join('')}
+</div>
+</div>
+<div style="display:flex;gap:10px">
+<button class="btn btn2" onclick="aiReset()">重新出题</button>
+<button class="btn" style="flex:1" onclick="aiSave()">💾 保存到【${state.aiSubj}】题库</button>
+</div>
+`;
+}
 
-  return `
-    <h2 style="margin-bottom:12px">🤖 AI智能出题</h2>
-    <p style="color:#666;margin-bottom:16px">上传教材文件，AI自动生成选择题和填空题</p>
-    ${!hasKey ? '<div class="err">⚠️ 请先在「设置」配置API密钥</div>' : ''}
-    ${state.aiMsg ? `<div class="${state.aiMsg.type}">${state.aiMsg.text}</div>` : ''}
-    <div class="card">
-      <h2>第1步：选择学科</h2>
-      <div class="grid">
-        ${names.map((n, i) => `
-          <div class="sj${state.aiSubj === n ? ' sl' : ''}" onclick="aiSetSubj('${n}')">
-            <div style="font-size:28px">${icons[i]}</div>
-            <div>${n}</div>
-          </div>
-        `).join('')}
-      </div>
-    </div>
-    ${state.subjects[state.aiSubj]?.files?.length > 0 ? `
-      <div class="card" style="background:#f0f8ff">
-        <div style="font-size:12px;color:#666;margin-bottom:8px">📋 ${state.aiSubj}已上传过的文件（可再次上传生成不同题型）：</div>
-        ${state.subjects[state.aiSubj].files.map(f => `<div style="font-size:12px;padding:2px 0">📄 ${f.name} <span style="color:#999">(${f.count}题 · ${f.date})</span></div>`).join('')}
-      </div>
-    ` : ''}
-    <div class="card">
-      <h2>第2步：上传/选择文件</h2>
-      <div class="up" onclick="$('fileInput').click()" id="dropZone">
-        <div style="font-size:44px;margin-bottom:10px">${state.aiFile ? '📄' : '📤'}</div>
-        <div style="font-weight:600">${state.aiFile ? state.aiFile.name : '点击或拖拽上传文件'}</div>
-        <div style="color:#999;font-size:13px;margin-top:6px">支持 Word、PDF、图片、PPT</div>
-        <input type="file" id="fileInput" style="display:none" accept=".docx,.doc,.pdf,.jpg,.jpeg,.png,.pptx,.ppt,.txt" onchange="aiSetFile(this.files[0])">
-      </div>
-      ${state.aiFile ? `
-        <div style="margin-top:10px;display:flex;gap:8px">
-          <button class="btn" style="flex:1;background:#27ae60" onclick="aiRegenerate()">🔄 重新出题（不换文件）</button>
-          <button class="btn btn2" onclick="aiReset()">🗑️ 清除</button>
-        </div>
-      ` : ''}
-      ${state.subjects[state.aiSubj]?.files?.length > 0 ? `
-        <div style="margin-top:10px">
-          <div style="font-size:11px;color:#666;margin-bottom:6px">📋 历史文件（点击可重新选择）：</div>
-          <div style="max-height:80px;overflow-y:auto">
-            ${state.subjects[state.aiSubj].files.map((f, i) => `
-              <div style="padding:4px 8px;background:#f5f5f5;border-radius:4px;margin:2px 0;font-size:12px;cursor:pointer" onclick="aiSelectFileFromHistory(${i})">
-                📄 ${f.name} <span style="color:#999">(${f.count}题 · ${f.date})</span>
-              </div>
-            `).join('')}
-          </div>
-        </div>
-      ` : ''}
-    </div>
-    <div class="card">
-      <h2>第3步：出题设置</h2>
-      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-        <span>题目数量：</span>
-        <input type="number" min="5" max="100" value="${state.aiCount}" onchange="state.aiCount=Math.min(100,Math.max(5,parseInt(this.value)||10))" style="width:60px">
-        <span style="margin-left:10px">选择题比例：</span>
-        <input type="range" min="0" max="1" step="0.1" value="${state.aiRatio}" onchange="state.aiRatio=parseFloat(this.value);render()" style="width:100px">
-        <span>${Math.round(state.aiCount * state.aiRatio)} + ${state.aiCount - Math.round(state.aiCount * state.aiRatio)}</span>
-      </div>
-    </div>
-    <button class="btn" style="width:100%;padding:14px" onclick="aiStart()" ${!state.aiFile || !hasKey ? 'disabled' : ''}>🤖 开始AI出题</button>
-  `;
+return `
+<h2 style="margin-bottom:12px">🤖 AI智能出题</h2>
+<p style="color:#666;margin-bottom:16px">上传教材文件，AI自动生成选择题和填空题</p>
+${!hasKey ? '<div class="err">⚠️ 请先在「设置」配置API密钥</div>' : ''}
+${state.aiMsg ? `<div class="${state.aiMsg.type}">${state.aiMsg.text}</div>` : ''}
+<div class="card">
+<h2>第1步：选择学科</h2>
+<div class="grid">
+${names.map((n, i) => `
+<div class="sj${state.aiSubj === n ? ' sl' : ''}" onclick="aiSetSubj('${n}')">
+<div style="font-size:28px">${icons[i]}</div>
+<div>${n}</div>
+</div>
+`).join('')}
+</div>
+</div>
+${state.subjects[state.aiSubj]?.files?.length > 0 ? `
+<div class="card" style="background:#f0f8ff">
+<div style="font-size:12px;color:#666;margin-bottom:8px">📋 ${state.aiSubj}已上传过的文件（可再次上传生成不同题型）：</div>
+${state.subjects[state.aiSubj].files.map(f => `<div style="font-size:12px;padding:2px 0">📄 ${f.name} <span style="color:#999">(${f.count}题 · ${f.date})</span></div>`).join('')}
+</div>
+` : ''}
+<div class="card">
+<h2>第2步：上传/选择文件</h2>
+<div class="up" onclick="$('fileInput').click()" id="dropZone">
+<div style="font-size:44px;margin-bottom:10px">${state.aiFile ? '📄' : '📤'}</div>
+<div style="font-weight:600">${state.aiFile ? state.aiFile.name : '点击或拖拽上传文件'}</div>
+<div style="color:#999;font-size:13px;margin-top:6px">支持 Word、PDF、图片、PPT</div>
+<input type="file" id="fileInput" style="display:none" accept=".docx,.doc,.pdf,.jpg,.jpeg,.png,.pptx,.ppt,.txt" onchange="aiSetFile(this.files[0])">
+</div>
+${state.aiFile ? `
+<div style="margin-top:10px;display:flex;gap:8px">
+<button class="btn" style="flex:1;background:#27ae60" onclick="aiRegenerate()">🔄 重新出题（不换文件）</button>
+<button class="btn btn2" onclick="aiReset()">🗑️ 清除</button>
+</div>
+` : ''}
+${state.subjects[state.aiSubj]?.files?.length > 0 ? `
+<div style="margin-top:10px">
+<div style="font-size:11px;color:#666;margin-bottom:6px">📋 历史文件（点击可重新选择）：</div>
+<div style="max-height:80px;overflow-y:auto">
+${state.subjects[state.aiSubj].files.map((f, i) => `
+<div style="padding:4px 8px;background:#f5f5f5;border-radius:4px;margin:2px 0;font-size:12px;cursor:pointer" onclick="aiSelectFileFromHistory(${i})">
+📄 ${f.name} <span style="color:#999">(${f.count}题 · ${f.date})</span>
+</div>
+`).join('')}
+</div>
+</div>
+` : ''}
+</div>
+<div class="card">
+<h2>第3步：出题设置</h2>
+<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+<span>题目数量：</span>
+<input type="number" min="5" max="100" value="${state.aiCount}" onchange="state.aiCount=Math.min(100,Math.max(5,parseInt(this.value)||10))" style="width:60px">
+<span style="margin-left:10px">选择题比例：</span>
+<input type="range" min="0" max="1" step="0.1" value="${state.aiRatio}" onchange="state.aiRatio=parseFloat(this.value);render()" style="width:100px">
+<span>${Math.round(state.aiCount * state.aiRatio)} + ${state.aiCount - Math.round(state.aiCount * state.aiRatio)}</span>
+</div>
+</div>
+<button class="btn" style="width:100%;padding:14px" onclick="aiStart()" ${!state.aiFile || !hasKey ? 'disabled' : ''}>🤖 开始AI出题</button>
+`;
 }
 
 function renderLib() {
-  return `
-    <h2 style="margin-bottom:12px">📁 题库管理</h2>
-    <p style="color:#666;margin-bottom:16px">题库会一直累积，可随时清空</p>
-    ${Object.entries(state.subjects).map(([name, data]) => `
-      <div class="card">
-        <div style="display:flex;justify-content:space-between;align-items:center">
-          <div>
-            <span style="font-size:22px;margin-right:8px">${data.icon}</span>
-            <strong>${name}</strong>
-            <span style="color:#666;margin-left:10px">${data.questions.length} 道题目</span>
-          </div>
-          ${data.questions.length > 0 ? `<button class="btn btn2" onclick="clearSubj('${name}')">清空</button>` : ''}
-        </div>
-        ${data.files && data.files.length > 0 ? `
-          <div style="margin-top:12px;padding-top:12px;border-top:1px dashed #ddd">
-            <div style="font-size:12px;color:#666;margin-bottom:6px">📋 已上传文件（可重复出题）：</div>
-            ${data.files.map(f => `
-              <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;font-size:12px">
-                <span>📄 ${f.name}</span>
-                <span style="color:#999">${f.count}题</span>
-              </div>
-            `).join('')}
-          </div>
-        ` : ''}
-      </div>
-    `).join('')}
-  `;
+return `
+<h2 style="margin-bottom:12px">📁 题库管理</h2>
+<p style="color:#666;margin-bottom:16px">题库会自动同步到云端，多设备共享</p>
+${Object.entries(state.subjects).map(([name, data]) => `
+<div class="card">
+<div style="display:flex;justify-content:space-between;align-items:center">
+<div>
+<span style="font-size:22px;margin-right:8px">${data.icon}</span>
+<strong>${name}</strong>
+<span style="color:#666;margin-left:10px">${data.questions.length} 道题目</span>
+</div>
+${data.questions.length > 0 ? `<button class="btn btn2" onclick="clearSubj('${name}')">清空</button>` : ''}
+</div>
+${data.files && data.files.length > 0 ? `
+<div style="margin-top:12px;padding-top:12px;border-top:1px dashed #ddd">
+<div style="font-size:12px;color:#666;margin-bottom:6px">📋 已上传文件（可重复出题）：</div>
+${data.files.map(f => `
+<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;font-size:12px">
+<span>📄 ${f.name}</span>
+<span style="color:#999">${f.count}题</span>
+</div>
+`).join('')}
+</div>
+` : ''}
+</div>
+`).join('')}
+`;
 }
 
 function renderSet() {
-  return `
-    <h2 style="margin-bottom:12px">⚙️ 设置</h2>
-    <p style="color:#666;margin-bottom:16px">API密钥只需配置一次，永久保存在本地</p>
-    ${state.setMsg ? `<div class="${state.setMsg.type}">${state.setMsg.text}</div>` : ''}
-    <div class="card">
-      <h2>🔑 API密钥</h2>
-      <input type="password" id="apiKey" placeholder="sk-xxxxxxxx" value="${state.setKey}" oninput="state.setKey=this.value">
-    </div>
-    <div class="card">
-      <h2>🌐 API地址</h2>
-      <input type="text" id="apiUrl" placeholder="https://open.bigmodel.cn/api/paas/v4/chat/completitions" value="${state.setUrl}" oninput="state.setUrl=this.value">
-      <p style="font-size:12px;color:#666;margin-top:6px">智谱API地址（默认），或换成其他</p>
-    </div>
-    <button class="btn" style="width:100%" onclick="saveSettings()">💾 保存配置</button>
-    ${(state.logs && state.logs.length > 0) ? `
-      <div class="card" style="margin-top:16px">
-        <h2>📋 运行日志</h2>
-        <div style="background:#1a1a2e;color:#eee;padding:12px;border-radius:6px;font-family:monospace;font-size:11px;max-height:300px;overflow:auto;white-space:pre-wrap">
+return `
+<h2 style="margin-bottom:12px">⚙️ 设置</h2>
+<p style="color:#666;margin-bottom:16px">配置 GitHub Token 即可开启云端同步</p>
+${state.setMsg ? `<div class="${state.setMsg.type}">${state.setMsg.text}</div>` : ''}
+<div class="card">
+<h2>🔑 API密钥</h2>
+<input type="password" id="apiKey" placeholder="sk-xxxxxxxx" value="${state.setKey}" oninput="state.setKey=this.value">
+</div>
+<div class="card">
+<h2>🌐 API地址</h2>
+<input type="text" id="apiUrl" placeholder="https://open.bigmodel.cn/api/paas/v4/chat/completitions" value="${state.setUrl}" oninput="state.setUrl=this.value">
+<p style="font-size:12px;color:#666;margin-top:6px">智谱API地址（默认），或换成其他</p>
+</div>
+<div class="card">
+<h2>☁️ 云端同步（GitHub）</h2>
+<input type="text" placeholder="GitHub 用户名" value="${state.setGitOwner}" oninput="state.setGitOwner=this.value" style="margin-bottom:10px">
+<input type="text" placeholder="仓库名" value="${state.setGitRepo}" oninput="state.setGitRepo=this.value" style="margin-bottom:10px">
+<input type="password" placeholder="GitHub Personal Access Token" value="${state.setGitToken}" oninput="state.setGitToken=this.value">
+<p style="font-size:12px;color:#666;margin-top:8px">
+💡 Token 需要 repo 权限。在 GitHub Settings → Developer settings → Personal access tokens 生成。
+</p>
+</div>
+<div style="display:flex;gap:10px">
+<button class="btn" style="flex:1" onclick="saveSettings()">💾 保存配置</button>
+<button class="btn btn-sync" onclick="syncNow()">☁️ 立即同步</button>
+</div>
+<button class="btn btn2" style="width:100%;margin-top:10px" onclick="loadFromCloud()">🔄 从云端刷新</button>
+<div style="display:flex;gap:10px;margin-top:10px">
+<button class="btn" style="flex:1;background:#27ae60" onclick="exportData()">📤 导出题库</button>
+<button class="btn" style="flex:1;background:#e74c3c" onclick="document.getElementById('importFile').click()">📥 导入题库</button>
+<input type="file" id="importFile" style="display:none" accept=".json" onchange="importData(this.files[0])">
+</div>
+${(state.logs && state.logs.length > 0) ? `
+<div class="card" style="margin-top:16px">
+<h2>📋 运行日志</h2>
+<div style="background:#1a1a2e;color:#eee;padding:12px;border-radius:6px;font-family:monospace;font-size:11px;max-height:300px;overflow:auto;white-space:pre-wrap">
 ${state.logs.join('\n\n')}
-        </div>
-      </div>
-    ` : ''}
-  `;
+</div>
+</div>
+` : ''}
+`;
 }
 
 function renderTest(names, icons) {
-  if (state.testData) {
-    return renderQuiz();
-  }
-  return `
-    <h2 style="margin-bottom:12px">📝 学科测试</h2>
-    <p style="color:#666;margin-bottom:16px">选择学科开始测试，每次随机20题</p>
-    <div class="grid">
-      ${names.map((n, i) => {
-        const count = state.subjects[n].questions.length;
-        return `
-          <div class="sj${count === 0 ? ' off' : ''}" onclick="${count > 0 ? `startTest('${n}')` : ''}">
-            <div style="font-size:32px">${icons[i]}</div>
-            <div style="font-weight:600">${n}</div>
-            <div style="font-size:12px;color:#666">${count} 题</div>
-          </div>
-        `;
-      }).join('')}
-    </div>
-  `;
+if (state.testData) {
+return renderQuiz();
+}
+return `
+<h2 style="margin-bottom:12px">📝 学科测试</h2>
+<p style="color:#666;margin-bottom:16px">选择学科开始测试，每次随机20题</p>
+<div class="grid">
+${names.map((n, i) => {
+const count = state.subjects[n].questions.length;
+return `
+<div class="sj${count === 0 ? ' off' : ''}" onclick="${count > 0 ? `startTest('${n}')` : ''}">
+<div style="font-size:32px">${icons[i]}</div>
+<div style="font-weight:600">${n}</div>
+<div style="font-size:12px;color:#666">${count} 题</div>
+</div>
+`;
+}).join('')}
+</div>
+`;
 }
 
 function renderMix(names, icons) {
-  if (state.mixData) {
-    state.testData = state.mixData;
-    state.testIndex = 0;
-    state.testAnswers = [];
-    state.testDone = false;
-    state.testScore = 0;
-    state.mixData = null;
-    return renderQuiz();
-  }
-  return `
-    <h2 style="margin-bottom:12px">🔀 混合测试</h2>
-    <p style="color:#666;margin-bottom:16px">选择2个以上学科进行综合测试</p>
-    <div class="grid" style="margin-bottom:16px">
-      ${names.map((n, i) => {
-        const count = state.subjects[n].questions.length;
-        return `
-          <div class="sj${state.mixSelected.includes(n) ? ' sl' : ''}${count === 0 ? ' off' : ''}" 
-               onclick="${count > 0 ? `toggleMix('${n}')` : ''}">
-            ${icons[i]} ${n}
-          </div>
-        `;
-      }).join('')}
-    </div>
-    <button class="btn" style="width:100%;opacity:${state.mixSelected.length < 2 ? 0.4 : 1}" 
-            onclick="startMix()" ${state.mixSelected.length < 2 ? 'disabled' : ''}>
-      开始混合测试 (${state.mixSelected.length}科)
-    </button>
-  `;
+if (state.mixData) {
+state.testData = state.mixData;
+state.testIndex = 0;
+state.testAnswers = [];
+state.testDone = false;
+state.testScore = 0;
+state.instantScore = 0;
+state.testScored = [];
+const temp = state.mixData;
+state.mixData = null;
+state.testData = temp;
+return renderQuiz();
+}
+return `
+<h2 style="margin-bottom:12px">🔀 混合测试</h2>
+<p style="color:#666;margin-bottom:16px">选择2个以上学科进行综合测试</p>
+<div class="grid" style="margin-bottom:16px">
+${names.map((n, i) => {
+const count = state.subjects[n].questions.length;
+return `
+<div class="sj${state.mixSelected.includes(n) ? ' sl' : ''}${count === 0 ? ' off' : ''}"
+onclick="${count > 0 ? `toggleMix('${n}')` : ''}">
+${icons[i]} ${n}
+</div>
+`;
+}).join('')}
+</div>
+<button class="btn" style="width:100%;opacity:${state.mixSelected.length < 2 ? 0.4 : 1}"
+onclick="startMix()" ${state.mixSelected.length < 2 ? 'disabled' : ''}>
+开始混合测试 (${state.mixSelected.length}科)
+</button>
+`;
 }
 
 function renderQuiz() {
-  if (!state.testData.questions.length) {
-    return `
-      <div class="card" style="text-align:center;padding:40px">
-        <div style="font-size:48px;margin-bottom:12px">📭</div>
-        <div>该学科暂无题库</div>
-        <button class="btn" style="margin-top:16px" onclick="backTest()">返回</button>
-      </div>
-    `;
-  }
+if (!state.testData.questions.length) {
+return `
+<div class="card" style="text-align:center;padding:40px">
+<div style="font-size:48px;margin-bottom:12px">📭</div>
+<div>该学科暂无题库</div>
+<button class="btn" style="margin-top:16px" onclick="backTest()">返回</button>
+</div>
+`;
+}
 
-  if (state.testDone) {
-    const pct = Math.round(state.testScore / state.testData.questions.length * 100);
-    return `
-      <div class="rs">
-        <div style="font-size:60px;font-weight:700">${state.testScore}</div>
-        <div style="opacity:0.8">/ ${state.testData.questions.length}</div>
-        <div style="font-size:24px;margin:8px 0">${pct}%</div>
-        <div style="font-weight:600">${pct >= 90 ? '🎉 太棒了！' : pct >= 70 ? '👍 不错！' : '继续加油！'}</div>
-      </div>
-      <div class="card">
-        <h2>答题回顾</h2>
-        ${state.testData.questions.map((q, i) => {
-          const ok = state.testAnswers[i] && state.testAnswers[i].toLowerCase() === q.answer.toLowerCase();
-          return `<div style="display:flex;align-items:center;gap:8px;padding:8px;background:#f8f9fa;border-radius:6px;margin:4px 0;border-left:3px solid ${ok ? '#27ae60' : '#e74c3c'}">
-            <span>${ok ? '✅' : '❌'}</span>
-            <span style="font-size:13px">${q.question.substring(0, 50)}...</span>
-          </div>`;
-        }).join('')}
-      </div>
-      <div style="display:flex;gap:10px">
-        <button class="btn btn2" onclick="backTest()">返回</button>
-        <button class="btn" onclick="backTest()">再做一次</button>
-      </div>
-    `;
-  }
+if (state.testDone) {
+const pct = Math.round(state.testScore / state.testData.questions.length * 100);
+return `
+<div class="rs">
+<div style="font-size:60px;font-weight:700">${state.testScore}</div>
+<div style="opacity:0.8">/ ${state.testData.questions.length}</div>
+<div style="font-size:24px;margin:8px 0">${pct}%</div>
+<div style="font-weight:600">${pct >= 90 ? '🎉 太棒了！' : pct >= 70 ? '👍 不错！' : '继续加油！'}</div>
+</div>
+<div class="card">
+<h2>答题回顾</h2>
+${state.testData.questions.map((q, i) => {
+const ok = state.testAnswers[i] && state.testAnswers[i].toLowerCase() === q.answer.toLowerCase();
+return `<div style="display:flex;align-items:center;gap:8px;padding:8px;background:#f8f9fa;border-radius:6px;margin:4px 0;border-left:3px solid ${ok ? '#27ae60' : '#e74c3c'}">
+<span>${ok ? '✅' : '❌'}</span>
+<span style="font-size:13px">${q.question.substring(0, 50)}...</span>
+</div>`;
+}).join('')}
+</div>
+<div style="display:flex;gap:10px">
+<button class="btn btn2" onclick="backTest()">返回</button>
+<button class="btn" onclick="retryTest()">再做一次</button>
+</div>
+`;
+}
 
-  const q = state.testData.questions[state.testIndex];
-  const progress = ((state.testIndex + 1) / state.testData.questions.length) * 100;
+const q = state.testData.questions[state.testIndex];
+const progress = ((state.testIndex + 1) / state.testData.questions.length) * 100;
 
-  return `
-    <div style="margin-bottom:16px">
-      <div style="display:flex;justify-content:space-between;margin-bottom:6px;font-size:14px">
-        <span>第 ${state.testIndex + 1} / ${state.testData.questions.length} 题</span>
-        <span>${Math.round(progress)}%</span>
-      </div>
-      <div class="bar" style="background:#e9ecef"><div class="fil" style="width:${progress}%;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%)"></div></div>
-    </div>
-    <div class="qt">
-      <span style="background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);color:#fff;padding:4px 12px;border-radius:12px;font-size:12px">${q.type === 'choice' ? '选择题' : '填空题'}</span>
-      <div style="font-size:16px;margin:12px 0">${q.question}</div>
-      ${q.type === 'choice' && q.options ? `
-        <div>
-          ${q.options.map((opt, i) => `
-            <button class="op${state.testAnswers[state.testIndex] === opt ? ' ck' : ''}" onclick="selectAnswer('${opt.replace(/'/g, "\\'")}')">${opt}</button>
-          `).join('')}
-        </div>
-      ` : `
-        <input type="text" placeholder="请输入答案" id="fillAnswer" value="${state.testAnswers[state.testIndex] || ''}" 
-               oninput="state.testAnswers[${state.testIndex}]=this.value" autofocus>
-      `}
-    </div>
-    <div style="display:flex;gap:10px;justify-content:space-between">
-      <button class="btn btn2" onclick="prevQuestion()" ${state.testIndex === 0 ? 'disabled' : ''}>← 上一题</button>
-      ${state.testIndex === state.testData.questions.length - 1 ? 
-        `<button class="btn" onclick="submitTest()">提交答卷</button>` :
-        `<button class="btn" onclick="nextQuestion()">下一题 →</button>`
-      }
-    </div>
-  `;
+return `
+<div style="margin-bottom:16px">
+<div style="display:flex;justify-content:space-between;margin-bottom:6px;font-size:14px">
+<span>第 ${state.testIndex + 1} / ${state.testData.questions.length} 题</span>
+<span>${Math.round(progress)}%</span>
+</div>
+<div class="bar" style="background:#e9ecef"><div class="fil" style="width:${progress}%;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%)"></div></div>
+</div>
+${state.instantScore > 0 ? `<div class="suc" style="margin-bottom:12px">🎉 本次答对 ${state.instantScore} 题，已获得 ${state.instantScore} 积分！</div>` : ''}
+<div class="qt">
+<span style="background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);color:#fff;padding:4px 12px;border-radius:12px;font-size:12px">${q.type === 'choice' ? '选择题' : '填空题'}</span>
+<div style="font-size:16px;margin:12px 0">${q.question}</div>
+${q.type === 'choice' && q.options ? `
+<div>
+${q.options.map((opt, i) => {
+const selected = state.testAnswers[state.testIndex] === opt;
+const isCorrect = opt.toLowerCase() === q.answer.toLowerCase();
+let style = '';
+if (selected && isCorrect) style = 'background:#27ae60;color:#fff;border-color:#27ae60';
+else if (selected && !isCorrect) style = 'background:#e74c3c;color:#fff;border-color:#e74c3c';
+else if (!selected && isCorrect && state.testAnswers[state.testIndex]) style = 'background:#27ae60;color:#fff;border-color:#27ae60';
+return `<button class="op" style="${style}" onclick="selectAnswer('${opt.replace(/'/g, "\\'")}')">${opt}</button>`;
+}).join('')}
+</div>
+${state.testAnswers[state.testIndex] ? `
+<div style="margin-top:12px;padding:10px;background:${state.testAnswers[state.testIndex].toLowerCase() === q.answer.toLowerCase() ? '#f0fff4' : '#fff5f5'};border-radius:8px;font-size:14px">
+${state.testAnswers[state.testIndex].toLowerCase() === q.answer.toLowerCase() ?
+`<span style="color:#27ae60">✅ 正确！+1积分</span>` :
+`<span style="color:#e74c3c">❌ 错误，正确答案是：<strong>${q.answer}</strong></span>`
+}
+</div>
+` : ''}
+` : `
+<input type="text" placeholder="请输入答案" id="fillAnswer" value="${state.testAnswers[state.testIndex] || ''}"
+oninput="state.testAnswers[${state.testIndex}]=this.value" onchange="checkFillAnswer()" autofocus>
+${state.testAnswers[state.testIndex] ? `
+<div style="margin-top:12px;padding:10px;background:${state.testAnswers[state.testIndex].toLowerCase() === q.answer.toLowerCase() ? '#f0fff4' : '#fff5f5'};border-radius:8px;font-size:14px">
+${state.testAnswers[state.testIndex].toLowerCase() === q.answer.toLowerCase() ?
+`<span style="color:#27ae60">✅ 正确！+1积分</span>` :
+`<span style="color:#e74c3c">❌ 错误，正确答案是：<strong>${q.answer}</strong></span>`
+}
+</div>
+` : ''}
+`}
+</div>
+<div style="display:flex;gap:10px;justify-content:space-between">
+<button class="btn btn2" onclick="prevQuestion()" ${state.testIndex === 0 ? 'disabled' : ''}>← 上一题</button>
+${state.testIndex === state.testData.questions.length - 1 ?
+`<button class="btn" onclick="submitTest()">提交答卷</button>` :
+`<button class="btn" onclick="nextQuestion()">下一题 →</button>`
+}
+</div>
+`;
 }
 
 function renderScr() {
-  return `
-    <div class="rs" style="margin-bottom:20px">
-      <div style="font-size:50px;font-weight:700">${state.score}</div>
-      <div style="opacity:0.8">总积分</div>
-    </div>
-    <h2 style="margin-bottom:12px">测试历史</h2>
-    ${state.history.length === 0 ? 
-      `<div class="card" style="text-align:center;padding:30px;color:#999">暂无测试记录</div>` :
-      state.history.map(h => `
-        <div class="card" style="display:flex;justify-content:space-between;align-items:center">
-          <div>
-            <span style="color:#666;font-size:12px">${h.date}</span>
-            <span style="background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);color:#fff;padding:2px 8px;border-radius:10px;font-size:11px;margin-left:8px">${h.subj}</span>
-          </div>
-          <div>
-            <span style="font-weight:600">${h.score}/20</span>
-            <span style="color:${h.score >= 15 ? '#27ae60' : '#e74c3c'};font-weight:600;margin-left:8px">+${h.score}</span>
-          </div>
-        </div>
-      `).join('')
-    }
-  `;
+return `
+<div class="rs" style="margin-bottom:20px">
+<div style="font-size:50px;font-weight:700">${state.score}</div>
+<div style="opacity:0.8">总积分</div>
+</div>
+<h2 style="margin-bottom:12px">测试历史</h2>
+${state.history.length === 0 ?
+`<div class="card" style="text-align:center;padding:30px;color:#999">暂无测试记录</div>` :
+state.history.map(h => `
+<div class="card" style="display:flex;justify-content:space-between;align-items:center">
+<div>
+<span style="color:#666;font-size:12px">${h.date}</span>
+<span style="background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);color:#fff;padding:2px 8px;border-radius:10px;font-size:11px;margin-left:8px">${h.subj}</span>
+</div>
+<div>
+<span style="font-weight:600">${h.score}/20</span>
+<span style="color:${h.score >= 15 ? '#27ae60' : '#e74c3c'};font-weight:600;margin-left:8px">+${h.score}</span>
+</div>
+</div>
+`).join('')
+}
+`;
 }
 
 function renderWr() {
-  return `
-    <h2 style="margin-bottom:12px">📕 错题本</h2>
-    ${state.wrong.length === 0 ? 
-      `<div class="card" style="text-align:center;padding:30px;color:#999">
-        <div style="font-size:48px;margin-bottom:10px">🎉</div>
-        没有错题，继续加油！
-      </div>` :
-      state.wrong.map(w => `
-        <div class="card" style="border-left:4px solid #e74c3c">
-          <div style="font-weight:600;margin-bottom:8px">${w.question}</div>
-          <div style="font-size:13px;margin-bottom:4px">
-            <span style="color:#666">正确答案：</span>
-            <span style="color:#27ae60">${w.answer}</span>
-          </div>
-          <div style="font-size:13px;margin-bottom:4px">
-            <span style="color:#666">我的答案：</span>
-            <span style="color:#e74c3c">${w.myAnswer || '未作答'}</span>
-          </div>
-          <div style="font-size:11px;color:#999">${w.date} · ${w.subj}</div>
-        </div>
-      `).join('')
-    }
-  `;
+return `
+<h2 style="margin-bottom:12px">📕 错题本</h2>
+${state.wrong.length === 0 ?
+`<div class="card" style="text-align:center;padding:30px;color:#999">
+<div style="font-size:48px;margin-bottom:10px">🎉</div>
+没有错题，继续加油！
+</div>` :
+state.wrong.map(w => `
+<div class="card" style="border-left:4px solid #e74c3c">
+<div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:8px">
+<span style="background:#e74c3c;color:#fff;padding:2px 8px;border-radius:10px;font-size:11px">${w.type === 'choice' ? '选择题' : '填空题'}</span>
+<span style="font-size:11px;color:#999">${w.date} · ${w.subj}</span>
+</div>
+<div style="font-weight:600;margin-bottom:12px;line-height:1.6">${w.question}</div>
+${w.type === 'choice' && w.options ? `
+<div style="margin-bottom:12px;padding:8px;background:#f8f9fa;border-radius:6px">
+<div style="font-size:12px;color:#666;margin-bottom:4px">选项：</div>
+${w.options.map((opt, i) => {
+const isCorrect = opt === w.correctAnswer;
+const isMyChoice = opt === w.myAnswer;
+return `<div style="padding:4px 8px;margin:2px 0;background:${isCorrect ? '#d4edda' : isMyChoice ? '#f8d7da' : '#fff'};border-radius:4px;font-size:13px">
+${String.fromCharCode(65 + i)}. ${opt}
+${isCorrect ? ' ✅' : ''}
+${isMyChoice && !isCorrect ? ' ❌ 你的选择' : ''}
+</div>`;
+}).join('')}
+</div>
+` : ''}
+<div style="display:flex;gap:16px;font-size:13px">
+<div>
+<span style="color:#666">我的答案：</span>
+<span style="color:#e74c3c;font-weight:600">${w.myAnswer || '未作答'}</span>
+</div>
+<div>
+<span style="color:#666">正确答案：</span>
+<span style="color:#27ae60;font-weight:600">${w.correctAnswer || w.answer}</span>
+</div>
+</div>
+</div>
+`).join('')
+}
+`;
 }
 
 // 事件处理函数
 function setTab(t) {
-  state.tab = t;
-  state.aiStep = 'input';
-  state.aiMsg = null;
-  state.testData = null;
-  state.setKey = state.api.key;
-  state.setUrl = state.api.url;
-  state.setMsg = null;
-  render();
+state.tab = t;
+state.aiStep = 'input';
+state.aiMsg = null;
+state.testData = null;
+state.setKey = state.api.key;
+state.setUrl = state.api.url;
+state.setGitToken = state.api.gitToken || '';
+state.setGitOwner = state.api.gitOwner || GITHUB_CONFIG.owner;
+state.setGitRepo = state.api.gitRepo || GITHUB_CONFIG.repo;
+state.setMsg = null;
+render();
 }
 
 function aiSetSubj(s) {
-  state.aiSubj = s;
-  render();
+state.aiSubj = s;
+render();
 }
 
 function aiSetFile(f) {
-  if (f) {
-    state.aiFile = f;
-    state.aiContent = '';
-    render();
-  }
+if (f) {
+state.aiFile = f;
+state.aiContent = '';
+render();
+}
 }
 
 // 日志函数
 function log(msg, data) {
-  const time = new Date().toLocaleTimeString();
-  const logEntry = `[${time}] ${msg}` + (data ? `\n数据: ${JSON.stringify(data).substring(0,500)}` : '');
-  console.log(logEntry);
-  state.logs = state.logs || [];
-  state.logs.unshift(logEntry);
-  if (state.logs.length > 20) state.logs.pop();
+const time = new Date().toLocaleTimeString();
+const logEntry = `[${time}] ${msg}` + (data ? `\n数据: ${JSON.stringify(data).substring(0,500)}` : '');
+console.log(logEntry);
+state.logs = state.logs || [];
+state.logs.unshift(logEntry);
+if (state.logs.length > 20) state.logs.pop();
+}
+
+// 同步到云端
+async function syncNow() {
+state.setMsg = { type: 'suc', text: '正在同步...' };
+render();
+await saveToCloud();
 }
 
 async function aiStart() {
-  if (!state.aiFile || !state.api.key) {
-    log('错误: 文件或API密钥缺失', { hasFile: !!state.aiFile, hasKey: !!state.api.key });
-    return;
-  }
-  
-  log('开始出题', { file: state.aiFile.name, subj: state.aiSubj, count: state.aiCount });
-  
-  state.aiStep = 'loading';
-  state.aiProgress = 5;
-  state.aiText = '提取文件内容...';
-  state.aiMsg = null;
-  render();
+if (!state.aiFile || !state.api.key) {
+log('错误: 文件或API密钥缺失', { hasFile: !!state.aiFile, hasKey: !!state.api.key });
+return;
+}
 
-  try {
-    // 提取文件内容
-    const file = state.aiFile;
-    const ext = file.name.split('.').pop().toLowerCase();
-    let content = '';
-    log('文件类型: ' + ext);
+log('开始出题', { file: state.aiFile.name, subj: state.aiSubj, count: state.aiCount });
 
-    if (ext === 'pdf') {
-      state.aiText = '解析PDF...';
-      render();
-      const buf = await file.arrayBuffer();
-      const pdf = await pdfjsLib.getDocument(buf).promise;
-      const total = Math.min(pdf.numPages, 50);
-      for (let i = 1; i <= total; i++) {
-        state.aiText = `PDF第${i}/${total}页`;
-        state.aiProgress = 5 + (i / total) * 15;
-        render();
-        const page = await pdf.getPage(i);
-        const c = await page.getTextContent();
-        content += c.items.map(item => item.str).join(' ') + '\n';
-      }
-    } else if (ext === 'docx' || ext === 'doc') {
-      state.aiText = '解析Word...';
-      render();
-      const buf = await file.arrayBuffer();
-      const result = await mammoth.extractRawText({ arrayBuffer: buf });
-      content = result.value;
-    } else if (['jpg', 'jpeg', 'png'].includes(ext)) {
-      state.aiText = '读取图片...';
-      render();
-      content = await new Promise(resolve => {
-        const reader = new FileReader();
-        reader.onload = () => resolve('IMG:' + reader.result);
-        reader.readAsDataURL(file);
-      });
-    } else {
-      content = await file.text();
-    }
+state.aiStep = 'loading';
+state.aiProgress = 5;
+state.aiText = '提取文件内容...';
+state.aiMsg = null;
+render();
 
-    if (!content) throw new Error('文件内容为空');
-    log('文件内容提取成功', { length: content.length, preview: content.substring(0, 100) });
-    state.aiContent = content;
+try {
+// 提取文件内容
+const file = state.aiFile;
+const ext = file.name.split('.').pop().toLowerCase();
+let content = '';
+log('文件类型: ' + ext);
 
-    // 分批出题，每批10题，避免截断
-    const batchSize = 10;
-    const batches = Math.ceil(state.aiCount / batchSize);
-    const allQuestions = [];
-    
-    log('分批出题', { total: state.aiCount, batches: batches, perBatch: batchSize });
+if (ext === 'pdf') {
+state.aiText = '解析PDF...';
+render();
+const buf = await file.arrayBuffer();
+const pdf = await pdfjsLib.getDocument(buf).promise;
+const total = Math.min(pdf.numPages, 50);
+for (let i = 1; i <= total; i++) {
+state.aiText = `PDF第${i}/${total}页`;
+state.aiProgress = 5 + (i / total) * 15;
+render();
+const page = await pdf.getPage(i);
+const c = await page.getTextContent();
+content += c.items.map(item => item.str).join(' ') + '\n';
+}
+} else if (ext === 'docx' || ext === 'doc') {
+state.aiText = '解析Word...';
+render();
+const buf = await file.arrayBuffer();
+const result = await mammoth.extractRawText({ arrayBuffer: buf });
+content = result.value;
+} else if (['jpg', 'jpeg', 'png'].includes(ext)) {
+state.aiText = '读取图片...';
+render();
+content = await new Promise(resolve => {
+const reader = new FileReader();
+reader.onload = () => resolve('IMG:' + reader.result);
+reader.readAsDataURL(file);
+});
+} else {
+content = await file.text();
+}
 
-    for (let batch = 0; batch < batches; batch++) {
-      const start = batch * batchSize;
-      const end = Math.min(start + batchSize, state.aiCount);
-      const batchCount = end - start;
-      
-      state.aiProgress = 20 + (batch / batches) * 50;
-      state.aiText = `第${batch + 1}/${batches}批出题 (${start + 1}-${end}题)...`;
-      render();
+if (!content) throw new Error('文件内容为空');
+log('文件内容提取成功', { length: content.length, preview: content.substring(0, 100) });
+state.aiContent = content;
 
-      const choiceCount = Math.round(batchCount * state.aiRatio);
-      const fillCount = batchCount - choiceCount;
+// 分批出题，每批10题，避免截断
+const batchSize = 10;
+const batches = Math.ceil(state.aiCount / batchSize);
+const allQuestions = [];
 
-      let prompt;
-      if (content.startsWith('IMG:')) {
-        prompt = `根据这张教材图片生成${batchCount}道题目(${choiceCount}道选择题,${fillCount}道填空题)。选择题必须有4个选项，填空题用______表示空位。只输出JSON格式:{"questions":[{"id":"1","type":"choice","question":"题目内容","options":["选项A","选项B","选项C","选项D"],"answer":"选项A"},{"id":"2","type":"fill","question":"______是答案","answer":"答案"}]}`;
-      } else {
-        prompt = `根据以下教材内容生成${batchCount}道题目(${choiceCount}道选择题,${fillCount}道填空题)。
+log('分批出题', { total: state.aiCount, batches: batches, perBatch: batchSize });
+
+for (let batch = 0; batch < batches; batch++) {
+const start = batch * batchSize;
+const end = Math.min(start + batchSize, state.aiCount);
+const batchCount = end - start;
+
+state.aiProgress = 20 + (batch / batches) * 50;
+state.aiText = `第${batch + 1}/${batches}批出题 (${start + 1}-${end}题)...`;
+render();
+
+const choiceCount = Math.round(batchCount * state.aiRatio);
+const fillCount = batchCount - choiceCount;
+
+let prompt;
+if (content.startsWith('IMG:')) {
+prompt = `根据这张教材图片生成${batchCount}道题目(${choiceCount}道选择题,${fillCount}道填空题)。选择题必须有4个选项，填空题用______表示空位。只输出JSON格式:{"questions":[{"id":"1","type":"choice","question":"题目内容","options":["选项A","选项B","选项C","选项D"],"answer":"选项A"},{"id":"2","type":"fill","question":"______是答案","answer":"答案"}]}`;
+} else {
+prompt = `根据以下教材内容生成${batchCount}道题目(${choiceCount}道选择题,${fillCount}道填空题)。
 
 要求：
 1. 选择题必须有4个选项
@@ -619,285 +931,364 @@ async function aiStart() {
 
 内容：
 ${content.substring(0, 6000)}`;
-      }
+}
 
-      // 根据URL判断模型
-      let model = 'glm-4-flash';
-      if (state.api.url.indexOf('moonshot') !== -1) {
-        model = 'moonshot-v1-8k';
-      } else if (state.api.url.indexOf('openai') !== -1 || state.api.url.indexOf('api2d') !== -1) {
-        model = 'gpt-4o-mini';
-      }
+// 根据URL判断模型
+let model = 'glm-4-flash';
+if (state.api.url.indexOf('moonshot') !== -1) {
+model = 'moonshot-v1-8k';
+} else if (state.api.url.indexOf('openai') !== -1 || state.api.url.indexOf('api2d') !== -1) {
+model = 'gpt-4o-mini';
+}
 
-      const apiBody = {
-        model: model,
-        messages: [{ role: 'user', content: prompt }],
-        temperature: 0.7,
-        max_tokens: 4000
-      };
+const apiBody = {
+model: model,
+messages: [{ role: 'user', content: prompt }],
+temperature: 0.7,
+max_tokens: 4000
+};
 
-      if (content.startsWith('IMG:')) {
-        apiBody.messages = [{
-          role: 'user',
-          content: [
-            { type: 'text', text: prompt },
-            { type: 'image_url', image_url: { url: content.replace('IMG:', '') } }
-          ]
-        }];
-      }
+if (content.startsWith('IMG:')) {
+apiBody.messages = [{
+role: 'user',
+content: [
+{ type: 'text', text: prompt },
+{ type: 'image_url', image_url: { url: content.replace('IMG:', '') } }
+]
+}];
+}
 
-      try {
-        const res = await fetch(state.api.url, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer ' + state.api.key.trim()
-          },
-          body: JSON.stringify(apiBody)
-        });
+try {
+const res = await fetch(state.api.url, {
+method: 'POST',
+headers: {
+'Content-Type': 'application/json',
+'Authorization': 'Bearer ' + state.api.key.trim()
+},
+body: JSON.stringify(apiBody)
+});
 
-        if (!res.ok) {
-          const errText = await res.text();
-          throw new Error('API错误(' + res.status + '): ' + errText.substring(0, 200));
-        }
+if (!res.ok) {
+const errText = await res.text();
+throw new Error('API错误(' + res.status + '): ' + errText.substring(0, 200));
+}
 
-        const data = await res.json();
-        const text = data.choices?.[0]?.message?.content || '';
-        
-        // 解析JSON
-        let parsed = null;
-        try {
-          parsed = JSON.parse(text);
-        } catch (e1) {
-          const match = text.match(/```json\n?([\s\S]*?)\n?```/) || text.match(/\{[\s\S]*"questions"[\s\S]*\}/);
-          if (match) {
-            try {
-              let cleaned = (match[1] || match[0])
-                .replace(/\n/g, ' ')
-                .replace(/\s+/g, ' ')
-                .replace(/,\s*]/g, ']')
-                .replace(/,\s*}/g, '}');
-              parsed = JSON.parse(cleaned);
-            } catch (e2) {
-              log('第' + (batch + 1) + '批解析失败', { error: e2.message });
-            }
-          }
-        }
+const data = await res.json();
+const text = data.choices?.[0]?.message?.content || '';
 
-        if (parsed && parsed.questions && parsed.questions.length > 0) {
-          allQuestions.push(...parsed.questions);
-          log('第' + (batch + 1) + '批成功', { count: parsed.questions.length });
-        }
+// 解析JSON
+let parsed = null;
+try {
+parsed = JSON.parse(text);
+} catch (e1) {
+const match = text.match(/```json\n?([\s\S]*?)\n?```/) || text.match(/\{[\s\S]*"questions"[\s\S]*\}/);
+if (match) {
+try {
+let cleaned = (match[1] || match[0])
+.replace(/\n/g, ' ')
+.replace(/\s+/g, ' ')
+.replace(/,\s*]/g, ']')
+.replace(/,\s*}/g, '}');
+parsed = JSON.parse(cleaned);
+} catch (e2) {
+log('第' + (batch + 1) + '批解析失败', { error: e2.message });
+}
+}
+}
 
-      } catch (e) {
-        log('第' + (batch + 1) + '批失败', { error: e.message });
-      }
-    }
+if (parsed && parsed.questions && parsed.questions.length > 0) {
+allQuestions.push(...parsed.questions);
+log('第' + (batch + 1) + '批成功', { count: parsed.questions.length });
+}
 
-    if (allQuestions.length === 0) {
-      throw new Error('出题失败，请检查API配置或减少题目数量');
-    }
+} catch (e) {
+log('第' + (batch + 1) + '批失败', { error: e.message });
+}
+}
 
-    allQuestions.forEach((q, i) => q.id = String(i + 1));
+if (allQuestions.length === 0) {
+throw new Error('出题失败，请检查API配置或减少题目数量');
+}
 
-    state.aiProgress = 100;
-    state.aiText = '完成!';
-    state.aiQuestions = allQuestions;
-    log('出题完成', { total: allQuestions.length });
-    render();
+allQuestions.forEach((q, i) => q.id = String(i + 1));
 
-    setTimeout(() => {
-      state.aiStep = 'preview';
-      render();
-    }, 300);
+state.aiProgress = 100;
+state.aiText = '完成!';
+state.aiQuestions = allQuestions;
+log('出题完成', { total: allQuestions.length });
+render();
 
-  } catch (e) {
-    log('出题失败', { error: e.message, stack: e.stack });
-    state.aiMsg = { type: 'err', text: '出题失败: ' + e.message };
-    state.aiStep = 'input';
-    render();
-  }
+setTimeout(() => {
+state.aiStep = 'preview';
+render();
+}, 300);
+
+} catch (e) {
+log('出题失败', { error: e.message, stack: e.stack });
+state.aiMsg = { type: 'err', text: '出题失败: ' + e.message };
+state.aiStep = 'input';
+render();
+}
 }
 
 function aiSave() {
-  if (!state.aiQuestions) return;
-  const old = state.subjects[state.aiSubj].questions || [];
-  state.subjects[state.aiSubj].questions = [...old, ...state.aiQuestions];
-  
-  // 记录已上传文件名
-  if (state.aiFile && state.aiFile.name) {
-    if (!state.subjects[state.aiSubj].files) {
-      state.subjects[state.aiSubj].files = [];
-    }
-    const fileRecord = {
-      name: state.aiFile.name,
-      date: new Date().toLocaleDateString('zh-CN'),
-      count: state.aiQuestions.length
-    };
-    // 检查是否已存在同名文件
-    if (!state.subjects[state.aiSubj].files.find(f => f.name === state.aiFile.name)) {
-      state.subjects[state.aiSubj].files.push(fileRecord);
-    }
-  }
-  
-  state.aiMsg = { type: 'suc', text: `✅ 已保存${state.aiQuestions.length}道题到【${state.aiSubj}】题库！` };
-  saveState();
-  // 保存后保留文件，只清除其他临时状态
-  state.aiStep = 'input';
-  state.aiContent = '';
-  state.aiQuestions = null;
-  state.aiProgress = 0;
-  render();
+if (!state.aiQuestions) return;
+const old = state.subjects[state.aiSubj].questions || [];
+state.subjects[state.aiSubj].questions = [...old, ...state.aiQuestions];
+
+// 记录已上传文件名
+if (state.aiFile && state.aiFile.name) {
+if (!state.subjects[state.aiSubj].files) {
+state.subjects[state.aiSubj].files = [];
+}
+const fileRecord = {
+name: state.aiFile.name,
+date: new Date().toLocaleDateString('zh-CN'),
+count: state.aiQuestions.length
+};
+// 检查是否已存在同名文件
+if (!state.subjects[state.aiSubj].files.find(f => f.name === state.aiFile.name)) {
+state.subjects[state.aiSubj].files.push(fileRecord);
+}
+}
+
+state.aiMsg = { type: 'suc', text: `✅ 已保存${state.aiQuestions.length}道题到【${state.aiSubj}】题库！` };
+saveState();
+autoSave();
+// 保存后保留文件，只清除其他临时状态
+state.aiStep = 'input';
+state.aiContent = '';
+state.aiQuestions = null;
+state.aiProgress = 0;
+render();
 }
 
 // 重新出题（不换文件）
 function aiRegenerate() {
-  if (!state.aiFile) {
-    state.aiMsg = { type: 'err', text: '请先上传文件' };
-    render();
-    return;
-  }
-  state.aiStep = 'input';
-  state.aiQuestions = null;
-  state.aiProgress = 0;
-  state.aiMsg = null;
-  state.aiContent = ''; // 清除缓存，强制重新读取文件
-  render();
-  // 触发出题
-  setTimeout(() => aiStart(), 100);
+if (!state.aiFile) {
+state.aiMsg = { type: 'err', text: '请先上传文件' };
+render();
+return;
+}
+state.aiStep = 'input';
+state.aiQuestions = null;
+state.aiProgress = 0;
+state.aiMsg = null;
+state.aiContent = ''; // 清除缓存，强制重新读取文件
+render();
+// 触发出题
+setTimeout(() => aiStart(), 100);
 }
 
 // 从历史记录选择文件（需要重新上传同名文件）
 function aiSelectFileFromHistory(index) {
-  const fileInfo = state.subjects[state.aiSubj].files[index];
-  if (confirm(`请重新上传「${fileInfo.name}」文件\n\n提示：需要重新上传同一文件才能重新出题`)) {
-    // 触发文件选择框
-    setTimeout(() => document.getElementById('fileInput').click(), 100);
-  }
+const fileInfo = state.subjects[state.aiSubj].files[index];
+if (confirm(`请重新上传「${fileInfo.name}」文件\n\n提示：需要重新上传同一文件才能重新出题`)) {
+// 触发文件选择框
+setTimeout(() => document.getElementById('fileInput').click(), 100);
+}
 }
 
 function clearSubj(name) {
-  if (confirm('确定清空' + name + '题库？')) {
-    state.subjects[name].questions = [];
-    saveState();
-    render();
-  }
+if (confirm('确定清空' + name + '题库？')) {
+state.subjects[name].questions = [];
+saveState();
+autoSave();
+render();
+}
 }
 
 function saveSettings() {
-  state.api.key = state.setKey.trim();
-  state.api.url = state.setUrl.trim();
-  state.setMsg = { type: 'suc', text: '✅ 已保存！现在可以去AI出题页面使用了' };
-  saveState();
-  render();
+state.api.key = state.setKey.trim();
+state.api.url = state.setUrl.trim();
+state.api.gitToken = state.setGitToken.trim();
+state.api.gitOwner = state.setGitOwner.trim();
+state.api.gitRepo = state.setGitRepo.trim();
+state.setMsg = { type: 'suc', text: '✅ 已保存！' };
+saveState();
+render();
 }
 
 function startTest(name) {
-  const shuffled = [...state.subjects[name].questions].sort(() => Math.random() - 0.5);
-  state.testData = { subject: name, questions: shuffled.slice(0, Math.min(20, shuffled.length)) };
-  state.testIndex = 0;
-  state.testAnswers = [];
-  state.testDone = false;
-  state.testScore = 0;
-  render();
+const shuffled = [...state.subjects[name].questions].sort(() => Math.random() - 0.5);
+state.testData = { subject: name, questions: shuffled.slice(0, Math.min(20, shuffled.length)) };
+state.testIndex = 0;
+state.testAnswers = [];
+state.testDone = false;
+state.testScore = 0;
+state.instantScore = 0;
+state.testScored = [];
+render();
 }
 
 function backTest() {
-  state.testData = null;
-  state.mixData = null;
-  render();
+state.testData = null;
+state.mixData = null;
+state.instantScore = 0;
+state.testScored = [];
+render();
+}
+
+function retryTest() {
+// 重新开始当前测试
+const subject = state.testData?.subject;
+if (subject) {
+state.testDone = false;
+state.testIndex = 0;
+state.testAnswers = [];
+state.testScore = 0;
+state.instantScore = 0;
+state.testScored = [];
+render();
+}
 }
 
 function toggleMix(name) {
-  if (state.mixSelected.includes(name)) {
-    state.mixSelected = state.mixSelected.filter(s => s !== name);
-  } else {
-    state.mixSelected.push(name);
-  }
-  render();
+if (state.mixSelected.includes(name)) {
+state.mixSelected = state.mixSelected.filter(s => s !== name);
+} else {
+state.mixSelected.push(name);
+}
+render();
 }
 
 function startMix() {
-  if (state.mixSelected.length < 2) return;
-  const perSubject = Math.floor(20 / state.mixSelected.length);
-  let all = [];
-  state.mixSelected.forEach(s => {
-    const shuffled = [...state.subjects[s].questions].sort(() => Math.random() - 0.5);
-    all.push(...shuffled.slice(0, perSubject));
-  });
-  state.mixData = { subject: state.mixSelected.join('+'), questions: all.sort(() => Math.random() - 0.5).slice(0, 20) };
-  render();
+if (state.mixSelected.length < 2) return;
+const perSubject = Math.floor(20 / state.mixSelected.length);
+let all = [];
+state.mixSelected.forEach(s => {
+const shuffled = [...state.subjects[s].questions].sort(() => Math.random() - 0.5);
+all.push(...shuffled.slice(0, perSubject));
+});
+state.mixData = { subject: state.mixSelected.join('+'), questions: all.sort(() => Math.random() - 0.5).slice(0, 20) };
+render();
 }
 
 function selectAnswer(ans) {
-  state.testAnswers[state.testIndex] = ans;
-  render();
+state.testAnswers[state.testIndex] = ans;
+
+// 即时判断对错并反馈
+const q = state.testData.questions[state.testIndex];
+const isCorrect = ans.toLowerCase() === q.answer.toLowerCase();
+
+// 答对即时加分（只加一次）
+if (isCorrect && !state.testScored) {
+state.score += 1;
+state.instantScore = (state.instantScore || 0) + 1;
+state.testScored = state.testScored || [];
+state.testScored[state.testIndex] = true;
+saveState();
+}
+
+render();
+
+// 延迟后自动跳转下一题
+setTimeout(() => {
+if (state.testIndex < state.testData.questions.length - 1) {
+state.testIndex++;
+render();
+}
+}, 800);
+}
+
+// 填空题检查答案
+function checkFillAnswer() {
+const q = state.testData.questions[state.testIndex];
+const ans = state.testAnswers[state.testIndex];
+if (!ans) return;
+
+const isCorrect = ans.toLowerCase() === q.answer.toLowerCase();
+
+// 答对即时加分（只加一次）
+if (isCorrect && !state.testScored?.[state.testIndex]) {
+state.score += 1;
+state.instantScore = (state.instantScore || 0) + 1;
+state.testScored = state.testScored || [];
+state.testScored[state.testIndex] = true;
+saveState();
+}
+
+render();
 }
 
 function prevQuestion() {
-  if (state.testIndex > 0) {
-    state.testIndex--;
-    render();
-  }
+if (state.testIndex > 0) {
+state.testIndex--;
+render();
+}
 }
 
 function nextQuestion() {
-  if (state.testIndex < state.testData.questions.length - 1) {
-    state.testIndex++;
-    render();
-  }
+if (state.testIndex < state.testData.questions.length - 1) {
+state.testIndex++;
+render();
+}
 }
 
 function submitTest() {
-  let correct = 0;
-  state.testData.questions.forEach((q, i) => {
-    if (state.testAnswers[i] && state.testAnswers[i].toLowerCase() === q.answer.toLowerCase()) {
-      correct++;
-    }
-  });
-  state.testScore = correct;
-  
-  // 记录积分
-  state.score += correct;
-  state.history.unshift({
-    date: new Date().toLocaleDateString('zh-CN'),
-    subj: state.testData.subject,
-    score: correct
-  });
-  
-  // 记录错题
-  state.testData.questions.forEach((q, i) => {
-    if (state.testAnswers[i] && state.testAnswers[i].toLowerCase() !== q.answer.toLowerCase()) {
-      state.wrong.unshift({
-        ...q,
-        myAnswer: state.testAnswers[i],
-        date: new Date().toLocaleDateString('zh-CN'),
-        subj: state.testData.subject
-      });
-    }
-  });
-  
-  saveState();
-  state.testDone = true;
-  render();
+// 积分已在答题过程中即时加入，这里只计算最终得分
+let correct = 0;
+state.testData.questions.forEach((q, i) => {
+if (state.testAnswers[i] && state.testAnswers[i].toLowerCase() === q.answer.toLowerCase()) {
+correct++;
+}
+});
+state.testScore = correct;
+
+// 记录历史（不重复加分，积分已在答题时加入）
+state.history.unshift({
+date: new Date().toLocaleDateString('zh-CN'),
+subj: state.testData.subject,
+score: correct
+});
+
+// 记录错题（包含完整选项信息）
+state.testData.questions.forEach((q, i) => {
+const myAns = state.testAnswers[i];
+const isCorrect = myAns && myAns.toLowerCase() === q.answer.toLowerCase();
+
+if (!isCorrect) {
+// 选择题：找到用户选择的完整选项内容
+let myAnswerDisplay = myAns || '未作答';
+if (q.type === 'choice' && q.options && myAns) {
+// 用户选择的已经是完整选项内容
+myAnswerDisplay = myAns;
+}
+
+state.wrong.unshift({
+...q,
+myAnswer: myAnswerDisplay,
+correctAnswer: q.answer, // 明确标注正确答案
+date: new Date().toLocaleDateString('zh-CN'),
+subj: state.testData.subject
+});
+}
+});
+
+saveState();
+autoSave();
+state.testDone = true;
+render();
 }
 
 // 拖放支持
 document.addEventListener('DOMContentLoaded', function() {
-  render();
-  
-  document.addEventListener('dragover', function(e) {
-    e.preventDefault();
-  });
-  
-  document.addEventListener('drop', function(e) {
-    e.preventDefault();
-    if (state.tab === 'ai' && e.dataTransfer.files[0]) {
-      state.aiFile = e.dataTransfer.files[0];
-      state.aiContent = '';
-      render();
-    }
-  });
+// 从云端加载数据
+loadFromCloud();
+render();
+
+document.addEventListener('dragover', function(e) {
+e.preventDefault();
+});
+
+document.addEventListener('drop', function(e) {
+e.preventDefault();
+if (state.tab === 'ai' && e.dataTransfer.files[0]) {
+state.aiFile = e.dataTransfer.files[0];
+state.aiContent = '';
+render();
+}
+});
 });
 </script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
